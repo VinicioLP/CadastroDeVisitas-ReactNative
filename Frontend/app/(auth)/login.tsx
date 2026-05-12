@@ -36,7 +36,7 @@ export default function LoginScreen() {
         await AsyncStorage.setItem("currentUser", JSON.stringify(user));
 
         // Navega para a tela principal (tabs)
-        router.replace("/(tabs)");
+        router.replace("/(tabs)/CadastroVisitas");
       } else {
         Alert.alert("Erro", "Email ou senha incorretos");
       }
