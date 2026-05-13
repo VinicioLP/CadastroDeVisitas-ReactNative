@@ -8,6 +8,7 @@ import {
   ScrollView,
   Image,
   Alert,
+  Modal,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
@@ -25,6 +26,7 @@ export default function CadastroVisitaScreen() {
     longitude: number;
   } | null>(null);
   const [isCameraVisible, setIsCameraVisible] = useState(false);
+  const [isMapModalVisible, setIsMapModalVisible] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -72,7 +74,10 @@ export default function CadastroVisitaScreen() {
 
   const handleSave = async () => {
     if (!locationName || !photoUri || !location) {
-      Alert.alert("Erro", "Preencha o local, tire uma foto e selecione a localização no mapa.");
+      Alert.alert(
+        "Erro",
+        "Preencha o local, tire uma foto e selecione a localização no mapa.",
+      );
       return;
     }
 
@@ -113,15 +118,20 @@ export default function CadastroVisitaScreen() {
       <View style={styles.cameraContainer}>
         <CameraView style={styles.camera} ref={cameraRef} />
         <View style={styles.cameraOverlay}>
-          <TouchableOpacity 
-            style={styles.closeCameraButton} 
+          <TouchableOpacity
+            style={styles.closeCameraButton}
             onPress={() => setIsCameraVisible(false)}
           >
-            <Text style={{ color: "white", fontSize: 18, fontWeight: "bold" }}>Fechar</Text>
+            <Text style={{ color: "white", fontSize: 18, fontWeight: "bold" }}>
+              Fechar
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.cameraBottomButtons}>
-            <TouchableOpacity style={styles.captureButton} onPress={takePicture}>
+            <TouchableOpacity
+              style={styles.captureButton}
+              onPress={takePicture}
+            >
               <MaterialCommunityIcons name="camera" size={40} color="white" />
             </TouchableOpacity>
           </View>
@@ -131,11 +141,16 @@ export default function CadastroVisitaScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 40 }}
+    >
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Nova Visita Técnica</Text>
-          {currentUser && <Text style={styles.subtitle}>Funcionário: {currentUser.name}</Text>}
+          {currentUser && (
+            <Text style={styles.subtitle}>Funcionário: {currentUser.name}</Text>
+          )}
         </View>
         <TouchableOpacity onPress={handleLogout}>
           <MaterialCommunityIcons name="logout" size={24} color="#FF3B30" />
@@ -168,8 +183,8 @@ export default function CadastroVisitaScreen() {
             <MaterialCommunityIcons name="image-off" size={40} color="#ccc" />
           </View>
         )}
-        <TouchableOpacity 
-          style={styles.cameraButton} 
+        <TouchableOpacity
+          style={styles.cameraButton}
           onPress={() => setIsCameraVisible(true)}
         >
           <MaterialCommunityIcons name="camera-plus" size={24} color="white" />
@@ -178,21 +193,59 @@ export default function CadastroVisitaScreen() {
       </View>
 
       <Text style={styles.label}>Localização (Clique para ajustar)</Text>
-      <View style={styles.mapContainer}>
-        {location && (
-          <MapView
-            style={styles.map}
-            initialRegion={{
-              ...location,
-              latitudeDelta: 0.005,
-              longitudeDelta: 0.005,
-            }}
-            onPress={(e) => setLocation(e.nativeEvent.coordinate)}
-          >
-            <Marker coordinate={location} title="Local da Visita" />
-          </MapView>
-        )}
-      </View>
+      <TouchableOpacity
+        style={styles.mapButton}
+        onPress={() => setIsMapModalVisible(true)}
+      >
+        <MaterialCommunityIcons name="map" size={24} color="white" />
+        <Text style={styles.mapButtonText}>
+          {location ? "Editar Localização" : "Selecionar Localização"}
+        </Text>
+      </TouchableOpacity>
+      {location && (
+        <Text style={styles.locationInfo}>
+          📍 Lat: {location.latitude.toFixed(4)}, Long:{" "}
+          {location.longitude.toFixed(4)}
+        </Text>
+      )}
+
+      <Modal
+        visible={isMapModalVisible}
+        animationType="slide"
+        onRequestClose={() => setIsMapModalVisible(false)}
+      >
+        <View style={styles.mapModalContainer}>
+          <View style={styles.mapModalHeader}>
+            <Text style={styles.mapModalTitle}>Selecionar Localização</Text>
+            <TouchableOpacity onPress={() => setIsMapModalVisible(false)}>
+              <MaterialCommunityIcons name="close" size={28} color="#333" />
+            </TouchableOpacity>
+          </View>
+
+          {location && (
+            <MapView
+              style={styles.fullMap}
+              initialRegion={{
+                ...location,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }}
+              onPress={(e) => setLocation(e.nativeEvent.coordinate)}
+            >
+              <Marker coordinate={location} title="Local da Visita" />
+            </MapView>
+          )}
+
+          <View style={styles.mapModalFooter}>
+            <TouchableOpacity
+              style={styles.confirmButton}
+              onPress={() => setIsMapModalVisible(false)}
+            >
+              <Text style={styles.confirmButtonText}>CONFIRMAR</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
         <Text style={styles.saveButtonText}>SALVAR VISITA</Text>
@@ -281,6 +334,73 @@ const styles = StyleSheet.create({
   map: {
     width: "100%",
     height: "100%",
+  },
+  mapButton: {
+    backgroundColor: "#007AFF",
+    height: 50,
+    borderRadius: 8,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 5,
+  },
+  mapButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  locationInfo: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 8,
+    paddingHorizontal: 10,
+  },
+  mapModalContainer: {
+    flex: 1,
+    backgroundColor: "#fff",
+    paddingTop: 50,
+  },
+  mapModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: "#ddd",
+  },
+  mapModalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  fullMap: {
+    flex: 1,
+    width: "100%",
+  },
+  mapModalFooter: {
+    padding: 20,
+    paddingBottom: 30,
+    borderTopWidth: 1,
+    borderTopColor: "#ddd",
+  },
+  confirmButton: {
+    backgroundColor: "#34C759",
+    height: 55,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+  },
+  confirmButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
   },
   saveButton: {
     backgroundColor: "#34C759",
