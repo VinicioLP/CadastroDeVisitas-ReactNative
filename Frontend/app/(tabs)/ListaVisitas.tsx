@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { StyleSheet, FlatList, View, Text, Image, TouchableOpacity } from "react-native";
+import {
+  StyleSheet,
+  FlatList,
+  View,
+  Text,
+  Image,
+  TouchableOpacity,
+} from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -17,9 +24,7 @@ export default function ListVisitasScreen() {
 
   const loadVisitas = async () => {
     const visitsJson = await AsyncStorage.getItem("visitas");
-    if (visitsJson) {
-      setVisitas(JSON.parse(visitsJson).reverse());
-    }
+    setVisitas(visitsJson ? JSON.parse(visitsJson).reverse() : []);
   };
 
   const clearVisits = async () => {
@@ -31,11 +36,35 @@ export default function ListVisitasScreen() {
     <View style={styles.card}>
       <Image source={{ uri: item.photoUri }} style={styles.cardImage} />
       <View style={styles.cardContent}>
-        <Text style={styles.cardTitle}>{item.locationName}</Text>
-        <Text style={styles.cardText}>📅 {new Date(item.dateTime).toLocaleDateString()} {new Date(item.dateTime).toLocaleTimeString()}</Text>
-        <Text style={styles.cardText}>👤 {item.funcionario}</Text>
-        <Text style={styles.cardText} numberOfLines={2}>📝 {item.observation}</Text>
-        <Text style={styles.cardCoords}>📍 {item.latitude.toFixed(4)}, {item.longitude.toFixed(4)}</Text>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>{item.locationName}</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              item.synced ? styles.syncedBadge : styles.pendingBadge,
+            ]}
+          >
+            <Text
+              style={[
+                styles.statusText,
+                item.synced ? styles.syncedText : styles.pendingText,
+              ]}
+            >
+              {item.synced ? "Sync" : "Pendente"}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.cardText}>
+          Data: {new Date(item.dateTime).toLocaleDateString()}{" "}
+          {new Date(item.dateTime).toLocaleTimeString()}
+        </Text>
+        <Text style={styles.cardText}>Funcionario: {item.funcionario}</Text>
+        <Text style={styles.cardText} numberOfLines={2}>
+          Observacao: {item.observation || "Sem observacao"}
+        </Text>
+        <Text style={styles.cardCoords}>
+          Lat/Long: {item.latitude.toFixed(4)}, {item.longitude.toFixed(4)}
+        </Text>
       </View>
     </View>
   );
@@ -43,15 +72,23 @@ export default function ListVisitasScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Visitas Técnicas</Text>
+        <Text style={styles.title}>Visitas Tecnicas</Text>
         <TouchableOpacity onPress={clearVisits}>
-          <MaterialCommunityIcons name="trash-can-outline" size={24} color="#FF3B30" />
+          <MaterialCommunityIcons
+            name="trash-can-outline"
+            size={24}
+            color="#FF3B30"
+          />
         </TouchableOpacity>
       </View>
 
       {visitas.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons name="clipboard-text-outline" size={60} color="#ccc" />
+          <MaterialCommunityIcons
+            name="clipboard-text-outline"
+            size={60}
+            color="#ccc"
+          />
           <Text style={styles.emptyText}>Nenhuma visita registrada ainda.</Text>
         </View>
       ) : (
@@ -104,10 +141,38 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 12,
   },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 4,
+  },
   cardTitle: {
+    flex: 1,
     fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 4,
+  },
+  statusBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  syncedBadge: {
+    backgroundColor: "#E9F8EF",
+  },
+  pendingBadge: {
+    backgroundColor: "#FFF4E5",
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  syncedText: {
+    color: "#248A3D",
+  },
+  pendingText: {
+    color: "#A45D00",
   },
   cardText: {
     fontSize: 14,

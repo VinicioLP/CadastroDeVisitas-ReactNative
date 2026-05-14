@@ -17,6 +17,26 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
+const API_URL = "http://192.168.137.1:8000/api";
+const VISITS_STORAGE_KEY = "visitas";
+
+type VisitStatus = "pending" | "synced" | "failed";
+
+type LocalVisit = {
+  id: string;
+  client_id: string;
+  locationName: string;
+  observation: string;
+  photoUri: string;
+  latitude: number;
+  longitude: number;
+  dateTime: string;
+  funcionario: string;
+  synced: boolean;
+  status: VisitStatus;
+  serverId?: number;
+};
+
 export default function CadastroVisitaScreen() {
   const [locationName, setLocationName] = useState("");
   const [observation, setObservation] = useState("");
@@ -28,6 +48,8 @@ export default function CadastroVisitaScreen() {
   const [isCameraVisible, setIsCameraVisible] = useState(false);
   const [isMapModalVisible, setIsMapModalVisible] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
@@ -36,13 +58,42 @@ export default function CadastroVisitaScreen() {
   useEffect(() => {
     loadUserData();
     requestPermissions();
+    syncPendingVisits();
   }, []);
+
+  const getStoredVisits = async (): Promise<LocalVisit[]> => {
+    const visitsJson = await AsyncStorage.getItem(VISITS_STORAGE_KEY);
+    const visits = visitsJson ? JSON.parse(visitsJson) : [];
+
+    return visits.map((visit: any) => {
+      const localId = visit.id || Date.now().toString();
+
+      return {
+        ...visit,
+        id: localId,
+        client_id: visit.client_id || localId,
+        synced: visit.synced === true,
+        status: visit.synced === true ? "synced" : visit.status || "pending",
+      };
+    });
+  };
+
+  const saveStoredVisits = async (visits: LocalVisit[]) => {
+    await AsyncStorage.setItem(VISITS_STORAGE_KEY, JSON.stringify(visits));
+    setPendingCount(visits.filter((visit) => !visit.synced).length);
+  };
+
+  const updatePendingCount = async () => {
+    const visits = await getStoredVisits();
+    setPendingCount(visits.filter((visit) => !visit.synced).length);
+  };
 
   const loadUserData = async () => {
     const userJson = await AsyncStorage.getItem("currentUser");
     if (userJson) {
       setCurrentUser(JSON.parse(userJson));
     }
+    updatePendingCount();
   };
 
   const requestPermissions = async () => {
@@ -72,44 +123,153 @@ export default function CadastroVisitaScreen() {
     }
   };
 
+  const buildVisitFormData = (visit: LocalVisit) => {
+    const formData = new FormData();
+
+    formData.append("client_id", visit.client_id);
+    formData.append("location_name", visit.locationName);
+    formData.append("observation", visit.observation);
+    formData.append("latitude", String(visit.latitude));
+    formData.append("longitude", String(visit.longitude));
+    formData.append("visit_date", visit.dateTime);
+    formData.append("photo", {
+      uri: visit.photoUri,
+      type: "image/jpeg",
+      name: `visit-${visit.client_id}.jpg`,
+    } as any);
+
+    return formData;
+  };
+
+  const sendVisitToApi = async (visit: LocalVisit, token: string) => {
+    const response = await fetch(`${API_URL}/visits`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: buildVisitFormData(visit),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || "Falha ao sincronizar visita");
+    }
+
+    return data;
+  };
+
+  const syncPendingVisits = async () => {
+    if (isSyncing) {
+      return { synced: 0, failed: 0 };
+    }
+
+    const token = await AsyncStorage.getItem("authToken");
+
+    if (!token) {
+      await updatePendingCount();
+      return { synced: 0, failed: 0 };
+    }
+
+    setIsSyncing(true);
+
+    try {
+      const visits = await getStoredVisits();
+      let synced = 0;
+      let failed = 0;
+
+      for (const visit of visits) {
+        if (visit.synced) {
+          continue;
+        }
+
+        try {
+          const result = await sendVisitToApi(visit, token);
+          visit.synced = true;
+          visit.status = "synced";
+          visit.serverId = result.data?.id;
+          synced += 1;
+        } catch (error) {
+          visit.synced = false;
+          visit.status = "failed";
+          failed += 1;
+        }
+      }
+
+      await saveStoredVisits(visits);
+      return { synced, failed };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const resetForm = () => {
+    setLocationName("");
+    setObservation("");
+    setPhotoUri(null);
+  };
+
   const handleSave = async () => {
-    if (!locationName || !photoUri || !location) {
+    const trimmedLocationName = locationName.trim();
+
+    if (!trimmedLocationName || !photoUri || !location) {
       Alert.alert(
         "Erro",
-        "Preencha o local, tire uma foto e selecione a localização no mapa.",
+        "Preencha o local, tire uma foto e selecione a localizacao no mapa.",
       );
       return;
     }
 
-    const novaVisita = {
-      id: Date.now().toString(),
-      locationName,
-      observation,
+    const localId = Date.now().toString();
+    const novaVisita: LocalVisit = {
+      id: localId,
+      client_id: localId,
+      locationName: trimmedLocationName,
+      observation: observation.trim(),
       photoUri,
       latitude: location.latitude,
       longitude: location.longitude,
       dateTime: new Date().toISOString(),
       funcionario: currentUser?.name || "Desconhecido",
+      synced: false,
+      status: "pending",
     };
 
     try {
-      const existingVisitsJson = await AsyncStorage.getItem("visitas");
-      const visits = existingVisitsJson ? JSON.parse(existingVisitsJson) : [];
+      const visits = await getStoredVisits();
       visits.push(novaVisita);
-      await AsyncStorage.setItem("visitas", JSON.stringify(visits));
+      await saveStoredVisits(visits);
 
-      Alert.alert("Sucesso", "Visita registrada com sucesso!");
-      // Limpar formulário
-      setLocationName("");
-      setObservation("");
-      setPhotoUri(null);
+      const result = await syncPendingVisits();
+      resetForm();
+
+      if (result.synced > 0 && result.failed === 0) {
+        Alert.alert("Sucesso", "Visita registrada e sincronizada com sucesso!");
+      } else {
+        Alert.alert(
+          "Salvo offline",
+          "A visita foi salva na lista de pendentes e sera sincronizada quando houver conexao.",
+        );
+      }
     } catch (error) {
-      Alert.alert("Erro", "Não foi possível salvar a visita.");
+      Alert.alert("Erro", "Nao foi possivel salvar a visita.");
     }
+  };
+
+  const handleManualSync = async () => {
+    const result = await syncPendingVisits();
+    Alert.alert(
+      "Sincronizacao",
+      result.synced > 0
+        ? `${result.synced} visita(s) sincronizada(s).`
+        : "Nenhuma visita pendente foi sincronizada agora.",
+    );
   };
 
   const handleLogout = async () => {
     await AsyncStorage.removeItem("currentUser");
+    await AsyncStorage.removeItem("authToken");
     router.replace("/login");
   };
 
@@ -147,25 +307,44 @@ export default function CadastroVisitaScreen() {
     >
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>Nova Visita Técnica</Text>
+          <Text style={styles.title}>Nova Visita Tecnica</Text>
           {currentUser && (
-            <Text style={styles.subtitle}>Funcionário: {currentUser.name}</Text>
+            <Text style={styles.subtitle}>Funcionario: {currentUser.name}</Text>
           )}
+          <Text style={styles.syncInfo}>
+            {pendingCount > 0
+              ? `${pendingCount} visita(s) pendente(s)`
+              : "Tudo sincronizado"}
+          </Text>
         </View>
-        <TouchableOpacity onPress={handleLogout}>
-          <MaterialCommunityIcons name="logout" size={24} color="#FF3B30" />
-        </TouchableOpacity>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={handleManualSync}
+            disabled={isSyncing}
+          >
+            <MaterialCommunityIcons
+              name={isSyncing ? "sync" : "cloud-sync-outline"}
+              size={24}
+              color="#007AFF"
+            />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconButton} onPress={handleLogout}>
+            <MaterialCommunityIcons name="logout" size={24} color="#FF3B30" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Text style={styles.label}>Nome do Local</Text>
       <TextInput
         style={styles.input}
-        placeholder="Ex: Fábrica Central"
+        placeholder="Ex: Fabrica Central"
         value={locationName}
         onChangeText={setLocationName}
       />
 
-      <Text style={styles.label}>Observação</Text>
+      <Text style={styles.label}>Observacao</Text>
       <TextInput
         style={[styles.input, { height: 80 }]}
         placeholder="Descreva a atividade..."
@@ -174,7 +353,7 @@ export default function CadastroVisitaScreen() {
         onChangeText={setObservation}
       />
 
-      <Text style={styles.label}>Foto do Local (Obrigatório)</Text>
+      <Text style={styles.label}>Foto do Local (Obrigatorio)</Text>
       <View style={styles.photoSection}>
         {photoUri ? (
           <Image source={{ uri: photoUri }} style={styles.previewImage} />
@@ -188,23 +367,23 @@ export default function CadastroVisitaScreen() {
           onPress={() => setIsCameraVisible(true)}
         >
           <MaterialCommunityIcons name="camera-plus" size={24} color="white" />
-          <Text style={styles.cameraButtonText}>Abrir Câmera</Text>
+          <Text style={styles.cameraButtonText}>Abrir Camera</Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.label}>Localização (Clique para ajustar)</Text>
+      <Text style={styles.label}>Localizacao (Clique para ajustar)</Text>
       <TouchableOpacity
         style={styles.mapButton}
         onPress={() => setIsMapModalVisible(true)}
       >
         <MaterialCommunityIcons name="map" size={24} color="white" />
         <Text style={styles.mapButtonText}>
-          {location ? "Editar Localização" : "Selecionar Localização"}
+          {location ? "Editar Localizacao" : "Selecionar Localizacao"}
         </Text>
       </TouchableOpacity>
       {location && (
         <Text style={styles.locationInfo}>
-          📍 Lat: {location.latitude.toFixed(4)}, Long:{" "}
+          Lat: {location.latitude.toFixed(4)}, Long:{" "}
           {location.longitude.toFixed(4)}
         </Text>
       )}
@@ -216,7 +395,7 @@ export default function CadastroVisitaScreen() {
       >
         <View style={styles.mapModalContainer}>
           <View style={styles.mapModalHeader}>
-            <Text style={styles.mapModalTitle}>Selecionar Localização</Text>
+            <Text style={styles.mapModalTitle}>Selecionar Localizacao</Text>
             <TouchableOpacity onPress={() => setIsMapModalVisible(false)}>
               <MaterialCommunityIcons name="close" size={28} color="#333" />
             </TouchableOpacity>
@@ -267,6 +446,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  iconButton: {
+    padding: 8,
+  },
   title: {
     fontSize: 22,
     fontWeight: "bold",
@@ -275,6 +462,11 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: "#666",
+  },
+  syncInfo: {
+    fontSize: 12,
+    color: "#007AFF",
+    marginTop: 2,
   },
   label: {
     fontSize: 14,

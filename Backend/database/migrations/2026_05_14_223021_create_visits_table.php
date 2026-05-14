@@ -13,6 +13,7 @@ return new class extends Migration
     {
         Schema::create('visits', function (Blueprint $table) {
             $table->id();
+            $table->unsignedBigInteger('client_id');
             $table->string('location_name', 255);
             $table->text('observation')->nullable();
             $table->string('photo_uri', 255)->nullable();

@@ -11,37 +11,70 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
+const API_URL = "http://192.168.137.1:8000/api";
+
+type AuthResponse = {
+  user?: unknown;
+  token?: string;
+  message?: string;
+  errors?: Record<string, string[]>;
+};
+
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail || !password) {
       Alert.alert("Erro", "Por favor, preencha todos os campos");
       return;
     }
 
     try {
-      const existingUsers = await AsyncStorage.getItem("users");
-      const users = existingUsers ? JSON.parse(existingUsers) : [];
+      setIsLoading(true);
 
-      const user = users.find(
-        (u: any) => u.email === email && u.password === password,
-      );
+      const response = await fetch(`${API_URL}/auth`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: trimmedEmail,
+          password,
+        }),
+      });
 
-      if (user) {
-        // Salva o usuário logado na sessão (opcional, mas comum)
-        await AsyncStorage.setItem("currentUser", JSON.stringify(user));
+      const data: AuthResponse = await response.json();
 
-        // Navega para a tela principal (tabs)
-        router.replace("/(tabs)/CadastroVisitas");
-      } else {
-        Alert.alert("Erro", "Email ou senha incorretos");
+      if (!response.ok) {
+        const validationMessage = data.errors
+          ? Object.values(data.errors).flat().join("\n")
+          : data.message;
+
+          console.log("Erro de login:", validationMessage || data.message);
+        Alert.alert("Erro", validationMessage || "Email ou senha incorretos");
+        return;
       }
+
+      if (!data.user || !data.token) {
+        Alert.alert("Erro", "Resposta invalida do servidor");
+        return;
+      }
+
+      await AsyncStorage.setItem("currentUser", JSON.stringify(data.user));
+      await AsyncStorage.setItem("authToken", data.token);
+
+      router.replace("/(tabs)/CadastroVisitas");
     } catch (error) {
       Alert.alert("Erro", "Falha ao tentar fazer login");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -78,12 +111,18 @@ export default function LoginScreen() {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.button} onPress={handleLogin}>
-        <Text style={styles.buttonText}>Entrar</Text>
+      <TouchableOpacity
+        style={[styles.button, isLoading && styles.buttonDisabled]}
+        onPress={handleLogin}
+        disabled={isLoading}
+      >
+        <Text style={styles.buttonText}>
+          {isLoading ? "Entrando..." : "Entrar"}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={() => router.push("/register")}>
-        <Text style={styles.linkText}>Não tem uma conta? Cadastre-se</Text>
+        <Text style={styles.linkText}>Nao tem uma conta? Cadastre-se</Text>
       </TouchableOpacity>
     </View>
   );
@@ -140,6 +179,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
     marginBottom: 20,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
     color: "#fff",

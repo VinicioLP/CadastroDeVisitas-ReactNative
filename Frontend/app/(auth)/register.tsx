@@ -11,42 +11,85 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
+const API_URL = "http://192.168.137.1:8000/api";
+
+type AuthResponse = {
+  user?: unknown;
+  token?: string;
+  message?: string;
+  errors?: Record<string, string[]>;
+};
+
 export default function RegisterScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const handleRegister = async () => {
-    if (!name || !email || !password) {
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+
+    if (!trimmedName || !trimmedEmail || !password) {
       Alert.alert("Erro", "Por favor, preencha todos os campos");
       return;
     }
 
-    try {
-      // Busca usuários já cadastrados
-      const existingUsers = await AsyncStorage.getItem("users");
-      const users = existingUsers ? JSON.parse(existingUsers) : [];
+    if (password.length < 6) {
+      Alert.alert("Erro", "A senha deve conter no minimo 6 caracteres");
+      return;
+    }
 
-      // Verifica se o email já existe
-      const userExists = users.find((u: any) => u.email === email);
-      if (userExists) {
-        Alert.alert("Erro", "Este email já está cadastrado");
+    try {
+      setIsLoading(true);
+
+      const response = await fetch(`${API_URL}/register`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: trimmedName,
+          email: trimmedEmail,
+          password,
+        }),
+      });
+
+      const data: AuthResponse = await response.json();
+
+      if (!response.ok) {
+        const validationMessage = data.errors
+          ? Object.values(data.errors).flat().join("\n")
+          : data.message;
+
+        Alert.alert(
+          "Erro",
+          validationMessage || "Nao foi possivel cadastrar o usuario",
+        );
         return;
       }
 
-      // Adiciona novo usuário
-      const newUser = { name, email, password };
-      users.push(newUser);
+      if (!data.user || !data.token) {
+        Alert.alert("Erro", "Resposta invalida do servidor");
+        return;
+      }
 
-      await AsyncStorage.setItem("users", JSON.stringify(users));
+      await AsyncStorage.setItem("currentUser", JSON.stringify(data.user));
+      await AsyncStorage.setItem("authToken", data.token);
 
-      Alert.alert("Sucesso", "Usuário cadastrado com sucesso!", [
-        { text: "OK", onPress: () => router.replace("/login") },
+      Alert.alert("Sucesso", "Usuario cadastrado com sucesso!", [
+        {
+          text: "OK",
+          onPress: () => router.replace("/(tabs)/CadastroVisitas"),
+        },
       ]);
     } catch (error) {
-      Alert.alert("Erro", "Não foi possível salvar o usuário");
+      Alert.alert("Erro", "Nao foi possivel cadastrar o usuario");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -90,12 +133,18 @@ export default function RegisterScreen() {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity style={styles.button} onPress={handleRegister}>
-        <Text style={styles.buttonText}>Cadastrar</Text>
+      <TouchableOpacity
+        style={[styles.button, isLoading && styles.buttonDisabled]}
+        onPress={handleRegister}
+        disabled={isLoading}
+      >
+        <Text style={styles.buttonText}>
+          {isLoading ? "Cadastrando..." : "Cadastrar"}
+        </Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={() => router.push("/login")}>
-        <Text style={styles.linkText}>Já tem uma conta? Faça login</Text>
+        <Text style={styles.linkText}>Ja tem uma conta? Faca login</Text>
       </TouchableOpacity>
     </View>
   );
@@ -152,6 +201,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
     marginBottom: 20,
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
     color: "#fff",

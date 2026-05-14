@@ -14,7 +14,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'min:3'],
             'email' => ['required', 'email', 'min:6', 'unique:users,email'],
-            'pass' => ['required', 'min:6']
+            'password' => ['required', 'min:6']
         ], [
             'name.required' => 'O campo nome é obrigatório.',
             'name.string' => 'O campo nome deve ser uma string.',
@@ -22,14 +22,14 @@ class AuthController extends Controller
             'email.email' => 'O campo email deve ser um email válido.',
             'email.min' => 'O campo email deve conter no mínimo 6 caracteres.',
             'email.unique' => 'Erro ao registrar usuário.',
-            'pass.min' => 'O campo senha deve conter no mínimo 6 caracteres.',
-            'pass.required' => 'O campo senha é obrigatório.'
+            'password.min' => 'O campo senha deve conter no mínimo 6 caracteres.',
+            'password.required' => 'O campo senha é obrigatório.'
         ]);
 
         $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
-            'password' => $data['pass']
+            'password' => $data['password']
         ]);
 
         $token = $user->createToken('mobile')->plainTextToken;
@@ -43,18 +43,18 @@ class AuthController extends Controller
     {
         $data = $request->validate([
             'email' => ['required', 'email', 'min:6'],
-            'pass' => ['required', 'min:6']
+            'password' => ['required', 'min:6']
         ], [
             'email.email' => 'O campo email deve ser um email válido.',
             'email.min' => 'O campo email deve conter no mínimo 6 caracteres.',
-            'pass.min' => 'O campo senha deve conter no mínimo 6 caracteres.',
-            'pass.required' => 'O campo senha é obrigatório.',
+            'password.min' => 'O campo senha deve conter no mínimo 6 caracteres.',
+            'password.required' => 'O campo senha é obrigatório.',
             'email.required' => 'O campo email é obrigatório.'
         ]);
 
-        $user = User::where('email', '=', $request->email, true)->first();
+        $user = User::where('email', $data['email'])->first();
 
-        if (!$user || !Hash::check($data['pass'], $user->password)) {
+        if (!$user || !Hash::check($data['password'], $user->password)) {
             return response()->json(['message' => 'Credenciais inválidas.'], 401);
         }
 
