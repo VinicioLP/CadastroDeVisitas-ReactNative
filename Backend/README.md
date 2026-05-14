@@ -1,58 +1,545 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Sistema de Sync Offline — React Native + Laravel
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+## Objetivo
 
-## About Laravel
+Permitir que o aplicativo funcione mesmo sem internet.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+O usuário poderá:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- marcar localização no mapa
+- tirar foto
+- salvar visita offline
+- sincronizar automaticamente quando a internet voltar
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+# Arquitetura
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```txt
+React Native
+   ↓
+AsyncStorage
+   ↓
+Fila de sincronização
+   ↓
+NetInfo detecta internet
+   ↓
+Laravel API
+   ↓
+Banco de dados
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+---
 
-## Contributing
+# Backend Laravel
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Instalar Sanctum
 
-## Code of Conduct
+```bash
+composer require laravel/sanctum
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Publicar arquivos:
 
-## Security Vulnerabilities
+```bash
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Executar migrations:
 
-## License
+```bash
+php artisan migrate
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+# Migration da tabela visits
+
+Criar migration:
+
+```bash
+php artisan make:migration create_visits_table
+```
+
+## database/migrations/create_visits_table.php
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('visits', function (Blueprint $table) {
+
+            $table->id();
+
+            $table->foreignId('user_id')
+                ->constrained()
+                ->cascadeOnDelete();
+
+            // evita duplicações no sync
+            $table->uuid('client_id')
+                ->unique();
+
+            $table->string('title');
+
+            $table->text('description')
+                ->nullable();
+
+            // coordenadas
+            $table->decimal('latitude', 10, 7);
+
+            $table->decimal('longitude', 10, 7);
+
+            // imagem
+            $table->string('photo_path');
+
+            // status do sync
+            $table->enum('sync_status', [
+                'pending',
+                'synced',
+                'failed'
+            ])->default('synced');
+
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('visits');
+    }
+};
+```
+
+---
+
+# Model Visit
+
+Criar model:
+
+```bash
+php artisan make:model Visit
+```
+
+## app/Models/Visit.php
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Visit extends Model
+{
+    protected $fillable = [
+        'user_id',
+        'client_id',
+        'title',
+        'description',
+        'latitude',
+        'longitude',
+        'photo_path',
+        'sync_status'
+    ];
+
+    protected $casts = [
+        'latitude' => 'float',
+        'longitude' => 'float'
+    ];
+
+    public function user()
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+```
+
+---
+
+# Controller
+
+Criar controller:
+
+```bash
+php artisan make:controller Api/VisitController
+```
+
+## app/Http/Controllers/Api/VisitController.php
+
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Models\Visit;
+use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+
+class VisitController extends Controller
+{
+    public function store(Request $request)
+    {
+        $request->validate([
+            'client_id' => ['required', 'uuid'],
+            'title' => ['required'],
+            'latitude' => ['required', 'numeric'],
+            'longitude' => ['required', 'numeric'],
+            'photo' => ['required', 'image']
+        ]);
+
+        // evita duplicação
+        $exists = Visit::where(
+            'client_id',
+            $request->client_id
+        )->exists();
+
+        if ($exists) {
+            return response()->json([
+                'message' => 'Visita já sincronizada'
+            ]);
+        }
+
+        // salva imagem
+        $path = $request->file('photo')
+            ->store('visits', 'public');
+
+        // cria visita
+        $visit = Visit::create([
+            'user_id' => auth()->id(),
+            'client_id' => $request->client_id,
+            'title' => $request->title,
+            'description' => $request->description,
+            'latitude' => $request->latitude,
+            'longitude' => $request->longitude,
+            'photo_path' => $path,
+            'sync_status' => 'synced'
+        ]);
+
+        return response()->json([
+            'message' => 'Visita criada',
+            'data' => $visit
+        ]);
+    }
+}
+```
+
+---
+
+# Rotas da API
+
+## routes/api.php
+
+```php
+use App\Http\Controllers\Api\VisitController;
+
+Route::middleware('auth:sanctum')
+    ->group(function () {
+
+        Route::post(
+            '/visits',
+            [VisitController::class, 'store']
+        );
+
+    });
+```
+
+---
+
+# Configurar storage
+
+```bash
+php artisan storage:link
+```
+
+---
+
+# React Native
+
+## Instalar dependências
+
+```bash
+npm install axios
+
+npm install @react-native-async-storage/async-storage
+
+npm install @react-native-community/netinfo
+
+npm install uuid
+
+npm install react-native-get-random-values
+```
+
+---
+
+# Estrutura do React Native
+
+```txt
+src/
+ ├── api/
+ │    └── client.js
+ │
+ ├── services/
+ │    └── syncService.js
+ │
+ ├── storage/
+ │    └── visitStorage.js
+ │
+ ├── utils/
+ │    └── internet.js
+ │
+ └── screens/
+      └── MapScreen.js
+```
+
+---
+
+# Axios configurado
+
+## src/api/client.js
+
+```js
+import axios from 'axios';
+
+import AsyncStorage from
+    '@react-native-async-storage/async-storage';
+
+const api = axios.create({
+    baseURL: 'http://SEU_IP:8000/api'
+});
+
+api.interceptors.request.use(
+    async config => {
+
+        const token =
+            await AsyncStorage.getItem('token');
+
+        if (token) {
+
+            config.headers.Authorization =
+                `Bearer ${token}`;
+
+        }
+
+        return config;
+    }
+);
+
+export default api;
+```
+
+---
+
+# Salvando visita offline
+
+## src/storage/visitStorage.js
+
+```js
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export async function saveVisitOffline(visit)
+{
+    const visits = JSON.parse(
+        await AsyncStorage.getItem('visits')
+    ) || [];
+
+    visits.push(visit);
+
+    await AsyncStorage.setItem(
+        'visits',
+        JSON.stringify(visits)
+    );
+}
+```
+
+---
+
+# Criando visita offline
+
+```js
+import { v4 as uuid } from 'uuid';
+
+const visit = {
+    client_id: uuid(),
+    title,
+    description,
+    latitude,
+    longitude,
+    photo_uri: imageUri,
+    synced: false,
+    status: 'pending'
+};
+
+await saveVisitOffline(visit);
+```
+
+---
+
+# Serviço de sincronização
+
+## src/services/syncService.js
+
+```js
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import api from '../api/client';
+
+export async function syncPendingVisits()
+{
+    const visits = JSON.parse(
+        await AsyncStorage.getItem('visits')
+    ) || [];
+
+    const pending = visits.filter(
+        visit => !visit.synced
+    );
+
+    for (const visit of pending) {
+
+        try {
+
+            const formData = new FormData();
+
+            formData.append(
+                'client_id',
+                visit.client_id
+            );
+
+            formData.append(
+                'title',
+                visit.title
+            );
+
+            formData.append(
+                'description',
+                visit.description
+            );
+
+            formData.append(
+                'latitude',
+                visit.latitude
+            );
+
+            formData.append(
+                'longitude',
+                visit.longitude
+            );
+
+            formData.append('photo', {
+                uri: visit.photo_uri,
+                type: 'image/jpeg',
+                name: 'photo.jpg'
+            });
+
+            await api.post(
+                '/visits',
+                formData,
+                {
+                    headers: {
+                        'Content-Type':
+                            'multipart/form-data'
+                    }
+                }
+            );
+
+            visit.synced = true;
+            visit.status = 'synced';
+
+        } catch (error) {
+
+            visit.status = 'failed';
+
+            console.log(error);
+        }
+    }
+
+    await AsyncStorage.setItem(
+        'visits',
+        JSON.stringify(visits)
+    );
+}
+```
+
+---
+
+# Detectando internet
+
+## src/utils/internet.js
+
+```js
+import NetInfo from '@react-native-community/netinfo';
+
+import { syncPendingVisits }
+    from '../services/syncService';
+
+export function startInternetListener()
+{
+    NetInfo.addEventListener(state => {
+
+        if (state.isConnected) {
+
+            syncPendingVisits();
+
+        }
+
+    });
+}
+```
+
+---
+
+# Fluxo completo
+
+```txt
+Usuário cria visita
+↓
+Tira foto
+↓
+Seleciona localização
+↓
+Salva localmente
+↓
+Internet caiu?
+↓
+SIM
+↓
+Fica pendente
+↓
+Internet voltou
+↓
+Sync automático
+↓
+Laravel salva imagem
+↓
+Laravel salva coordenadas
+↓
+Registro sincronizado
+```
+
+---
+
+# Melhorias futuras
+
+## Backend
+
+- múltiplas fotos
+- compressão de imagem
+- geolocalização avançada
+- busca por raio
+- paginação
+- AWS S3
+
+## Mobile
+
+- SQLite
+- retry automático
+- upload em background
+- fila visual de sync
+- cache de mapas
+- sincronização incremental
